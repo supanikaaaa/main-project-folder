@@ -1,5 +1,8 @@
+# main-project-folder
+
 Project Structure:
 
+```text
 Main_Project_Folder/
 │
 ├── PHP/
@@ -19,4 +22,4 @@ Main_Project_Folder/
     │
     ├── AUDIO/
     │
-    └── MISC/# main-project-folder
+    └── MISC/
