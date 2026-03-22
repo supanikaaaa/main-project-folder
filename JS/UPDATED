@@ -1,0 +1,258 @@
+let points = 100, maxChips = 100, regenAmount = 10, regenTimeLimit = 300, regenTimer = regenTimeLimit; 
+let totalSpent = 0, totalWon = 0, matchesPlayed = 0, highestChips = 100, currentRank = "Unranked"; 
+let diceHistory = [], colorHistory = [], primeHistory = [], primeColorHistory = [];
+let userData = { name: "", num: "", pic: "" };
+
+function previewImage(input) {
+    if (input.files && input.files[0]) {
+        let reader = new FileReader();
+        reader.onload = (e) => { document.getElementById('login-avatar').src = e.target.result; userData.pic = e.target.result; };
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
+function handleLogin() {
+    userData.name = document.getElementById('username').value;
+    userData.num = document.getElementById('player-num').value;
+    if(!userData.name || !userData.num) return alert("Fill details!");
+    document.getElementById('header-name').innerText = userData.name;
+    document.getElementById('header-avatar').src = userData.pic || 'user.png';
+    document.getElementById('modal-name').innerText = userData.name;
+    document.getElementById('modal-avatar').src = userData.pic || 'user.png';
+    document.getElementById('global-hud').style.display = 'flex';
+    
+    setupInitialRoulette(); 
+    updateProfileStats(); showScreen('main-menu');
+}
+
+function showScreen(id) { document.querySelectorAll('.screen-container').forEach(s => s.style.display = 'none'); document.getElementById(id).style.display = 'block'; }
+function toggleProfile() { let m = document.getElementById('profile-modal'); m.style.display = (m.style.display === 'none') ? 'flex' : 'none'; }
+
+function updateProfileStats() {
+    if (totalSpent >= 3000) currentRank = "High Roller"; else if (totalSpent >= 2000) currentRank = "Godly"; else if (totalSpent >= 1500) currentRank = "Newbie Rank"; else if (totalSpent >= 1000) currentRank = "Beginner"; else currentRank = "Unranked";
+    let achLevel = 0, achName = "Newbie", nextAchTarget = 1000;
+    if (totalWon >= 50000) { achLevel = 5; achName = "God"; nextAchTarget = "Maxed!"; } else if (totalWon >= 10000) { achLevel = 4; achName = "Legend"; nextAchTarget = 50000; } else if (totalWon >= 5000) { achLevel = 3; achName = "Monster"; nextAchTarget = 10000; } else if (totalWon >= 2500) { achLevel = 2; achName = "Unique"; nextAchTarget = 5000; } else if (totalWon >= 1000) { achLevel = 1; achName = "Normal"; nextAchTarget = 2500; }
+    
+    maxChips = 100 + (achLevel * 25);
+    document.getElementById('modal-achievement-display').innerText = `Achievement: ${achName}`;
+    document.getElementById('modal-chips').innerText = points; document.getElementById('modal-total-won').innerText = totalWon;
+    document.getElementById('modal-spent').innerText = totalSpent; document.getElementById('modal-next-ach').innerText = nextAchTarget;
+    document.getElementById('hud-chip-text').innerText = `${points}/${maxChips}`;
+}
+
+setInterval(() => {
+    if (points < maxChips) {
+        regenTimer--; let m = Math.floor(regenTimer / 60).toString().padStart(2, '0'); let s = (regenTimer % 60).toString().padStart(2, '0');
+        document.getElementById('regen-timer').innerText = `+ ${regenAmount} IN ${m}:${s}`;
+        if (regenTimer <= 0) { points += regenAmount; if (points > maxChips) points = maxChips; regenTimer = regenTimeLimit; updateProfileStats(); }
+    } else { document.getElementById('regen-timer').innerText = "MAX CAPACITY"; regenTimer = regenTimeLimit; }
+}, 1000);
+
+function processEndOfGame() {
+    matchesPlayed++; if (points > highestChips) highestChips = points; updateProfileStats();
+    if (points <= 0) setTimeout(() => { showGameOver(); }, 800); 
+}
+
+/* =========================================
+   GAME 1: 3D DICE
+   ========================================= */
+function getRot(n) { switch(n) { case 1: return {x:0,y:0}; case 2: return {x:0,y:-90}; case 3: return {x:-90,y:0}; case 4: return {x:90,y:0}; case 5: return {x:0,y:90}; case 6: return {x:180,y:0}; } }
+document.getElementById('roll-btn').addEventListener('click', () => {
+    const amt = parseInt(document.getElementById('dice-bet-amount').value), type = document.getElementById('dice-bet-type').value, btn = document.getElementById('roll-btn'), txt = document.getElementById('dice-result');
+    if (isNaN(amt) || amt <= 0 || amt > points) return alert("Invalid Bet!"); btn.disabled = true; txt.innerText = "Rolling..."; totalSpent += amt; points -= amt; updateProfileStats();
+    
+    let sfx = new Audio('soundeffect2.mp3');
+    sfx.play();
+
+    const n1 = Math.floor(Math.random() * 6) + 1, n2 = Math.floor(Math.random() * 6) + 1;
+    document.getElementById('die-1').style.transform = `rotateX(${getRot(n1).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(n1).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
+    document.getElementById('die-2').style.transform = `rotateX(${getRot(n2).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(n2).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
+    
+    setTimeout(() => {
+        const t = n1 + n2; diceHistory.push(t); if(diceHistory.length > 10) diceHistory.shift(); updateDice();
+        let win = false, rew = 10, m = 2;
+        switch(type) { case 'odd': if(t%2!==0)win=true; break; case 'even': if(t%2===0)win=true; break; case 'low': if(t<=6)win=true; break; case 'high': if(t>=8)win=true; break; case 'lucky7': if(t===7){win=true;rew=20;m=4;} break; }
+        
+        if (win) { 
+            new Audio('winning.mp3').play();
+            let w = amt * m; points += w; totalWon += w; 
+            txt.innerHTML = `<span class="win-text">YOU WIN! Payout: ${w} Chips</span>`; 
+        } else { 
+            new Audio('lossing.mp3').play();
+            txt.innerHTML = `<span class="lose-text">LOSE! Rolled ${t}.</span>`; 
+        }
+        btn.disabled = false; processEndOfGame();
+    }, 1280); 
+});
+function updateDice() {
+    if(!diceHistory.length)return; let o=0,e=0,l=0,h=0; diceHistory.forEach(n=>{if(n%2!==0)o++;else e++; if(n<=6)l++; if(n>=8)h++;}); let t=diceHistory.length;
+    document.getElementById('trend-odd').innerText=Math.round((o/t)*100)+'%'; document.getElementById('trend-even').innerText=Math.round((e/t)*100)+'%'; document.getElementById('trend-low').innerText=Math.round((l/t)*100)+'%'; document.getElementById('trend-high').innerText=Math.round((h/t)*100)+'%';
+    let p="Pattern is mixed!"; if(t>=3) { let l3=diceHistory.slice(-3); if(l3.every(n=>n%2!==0))p="🔥 3 Odds! Bet EVEN."; else if(l3.every(n=>n%2===0))p="🔥 3 Evens! Bet ODD."; else if(l3.every(n=>n<=6))p="🔥 3 Lows! Bet HIGH."; else if(l3.every(n=>n>=8))p="🔥 3 Highs! Bet LOW."; }
+    document.getElementById('trend-pred-dice').innerText = p;
+}
+
+/* =========================================
+   GAME 2: COLOR ROULETTE
+   ========================================= */
+function generateTrackArray(length) {
+    let arr = []; let nextColor = 'red';
+    for(let i=0; i<length; i++) {
+        if (i % 15 === 7) { arr.push('green'); } else { arr.push(nextColor); nextColor = (nextColor === 'red') ? 'black' : 'red'; }
+    }
+    return arr;
+}
+function setupInitialRoulette() {
+    const track = document.getElementById('color-track'); track.innerHTML = ''; track.style.transition = 'none'; track.style.transform = 'translateX(0)';
+    let colors = generateTrackArray(30);
+    colors.forEach(c => { let block = document.createElement('div'); block.className = 'roulette-block block-' + c; block.innerHTML = c === 'green' ? '🟢' : (c === 'red' ? '🔴' : '⚫'); track.appendChild(block); });
+}
+document.getElementById('color-btn').addEventListener('click', () => {
+    const amt = parseInt(document.getElementById('color-bet-amount').value), type = document.getElementById('color-bet-type').value;
+    const btn = document.getElementById('color-btn'), txt = document.getElementById('color-result'), track = document.getElementById('color-track');
+    if (isNaN(amt) || amt <= 0 || amt > points) return alert("Invalid Bet!"); 
+    btn.disabled = true; txt.innerText = "Spinning..."; totalSpent += amt; points -= amt; updateProfileStats();
+    
+    let sfx = new Audio('soundeffect1.mp3');
+    sfx.play();
+    
+    const rand = Math.random(); const finalColorStr = rand < 0.01 ? 'green' : (rand < 0.505 ? 'red' : 'black');
+    track.style.transition = 'none'; track.style.transform = 'translateX(0)'; track.innerHTML = '';
+    
+    let colors = generateTrackArray(100);
+    colors.forEach(c => { let block = document.createElement('div'); block.className = 'roulette-block block-' + c; block.innerHTML = c === 'green' ? '🟢' : (c === 'red' ? '🔴' : '⚫'); track.appendChild(block); });
+
+    let targetIndex = 60 + Math.floor(Math.random() * 15);
+    while (colors[targetIndex] !== finalColorStr) targetIndex++; 
+
+    void track.offsetWidth; 
+    const blockWidth = track.children[0].offsetWidth; 
+    const containerWidth = document.querySelector('.roulette-container').offsetWidth;
+    const targetCenter = (targetIndex * blockWidth) + (blockWidth / 2);
+    const randomOffset = (Math.random() * (blockWidth * 0.6)) - (blockWidth * 0.3);
+    const exactStopPos = targetCenter - (containerWidth / 2) + randomOffset;
+
+    track.style.transition = 'transform 8.31s cubic-bezier(0.15, 0.85, 0.3, 1)';
+    track.style.transform = `translateX(-${exactStopPos}px)`;
+
+    setTimeout(() => {
+        colorHistory.push(finalColorStr); if(colorHistory.length>10) colorHistory.shift(); updateColor();
+        if(type === finalColorStr){ 
+            new Audio('winning.mp3').play();
+            let mult = finalColorStr === 'green' ? 4 : 2; let w = amt * mult; points += w; totalWon += w; 
+            txt.innerHTML = `<span class="win-text">WIN! ${finalColorStr.toUpperCase()} pays ${w} Chips</span>`; 
+        } else { 
+            new Audio('lossing.mp3').play();
+            txt.innerHTML = `<span class="lose-text">LOSE! Landed on ${finalColorStr.toUpperCase()}.</span>`; 
+        }
+        btn.disabled = false; processEndOfGame();
+    }, 8310); 
+});
+function updateColor() {
+    if(!colorHistory.length)return; let r=0,b=0,g=0; colorHistory.forEach(c=>{if(c==='red')r++; else if(c==='black')b++; else g++;}); let t=colorHistory.length;
+    document.getElementById('trend-red').innerText=Math.round((r/t)*100)+'%'; document.getElementById('trend-black').innerText=Math.round((b/t)*100)+'%'; document.getElementById('trend-green').innerText=Math.round((g/t)*100)+'%';
+    let p="Pattern is mixed!"; if(t>=3){let l3=colorHistory.slice(-3); if(l3.every(c=>c==='red')) p="🔥 3 Reds! Bet BLACK or GREEN."; else if(l3.every(c=>c==='black')) p="🔥 3 Blacks! Bet RED or GREEN.";}
+    document.getElementById('trend-pred-color').innerText = p;
+}
+
+/* =========================================
+   GAME 3: PRIME PREDICTOR
+   ========================================= */
+const isPrime = n => { if(n<=1)return false; for(let i=2;i<=Math.sqrt(n);i++)if(n%i===0)return false; return true; };
+
+document.getElementById('prime-btn').addEventListener('click', () => {
+    const amt = parseInt(document.getElementById('prime-bet-amount').value);
+    const primeType = document.getElementById('prime-bet-type').value;
+    const colorType = document.getElementById('prime-color-type').value;
+    
+    const btn = document.getElementById('prime-btn'), txt = document.getElementById('prime-result'), sp = document.getElementById('prime-spinner');
+    
+    if (isNaN(amt) || amt <= 0 || amt > points) return alert("Invalid Bet!"); 
+    btn.disabled = true; txt.innerText = "Spinning..."; totalSpent += amt; points -= amt; updateProfileStats();
+    
+    let sfx = new Audio('soundeffect3.mp3');
+    sfx.play();
+    
+    let s = 0;
+    let anim = setInterval(() => {
+        let num = Math.floor(Math.random()*30)+1; 
+        sp.innerText = num;
+        sp.style.color = (num % 2 !== 0) ? '#e74c3c' : '#2ecc71'; 
+        s++;
+        
+        if(s >= 40) { 
+            clearInterval(anim); 
+            
+            const finalNum = Math.floor(Math.random()*30)+1; 
+            const finalColor = finalNum % 2 !== 0 ? 'red' : 'green';
+            const finalIsPrime = isPrime(finalNum);
+            
+            sp.innerText = finalNum; 
+            sp.style.color = (finalColor === 'red') ? '#e74c3c' : '#2ecc71'; 
+            
+            primeHistory.push(finalIsPrime); if(primeHistory.length>10) primeHistory.shift(); 
+            primeColorHistory.push(finalColor); if(primeColorHistory.length>10) primeColorHistory.shift(); 
+            updatePrime();
+            
+            let isPrimeCorrect = (primeType === 'prime' && finalIsPrime) || (primeType === 'not_prime' && !finalIsPrime);
+            let isColorCorrect = (colorType === finalColor);
+            
+            let win = false; let m = 0;
+            
+            if (isPrimeCorrect && isColorCorrect) { win = true; m = 2; } else if (isPrimeCorrect || isColorCorrect) { win = true; m = 1.5; }
+
+            let primeTextDisplay = finalIsPrime ? 'PRIME NUMBER' : 'NOT PRIME NUMBER';
+            let colorTextDisplay = isColorCorrect ? 'CORRECT COLOR' : finalColor.toUpperCase();
+
+            if(win){ 
+                new Audio('winning.mp3').play();
+                let w = Math.floor(amt * m); points += w; totalWon += w; 
+                txt.innerHTML = `<span class="win-text">WIN! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}. Pays ${w} Chips</span>`; 
+            } else {
+                new Audio('lossing.mp3').play();
+                txt.innerHTML = `<span class="lose-text">LOSE! ${finalNum} is ${primeTextDisplay}, ${finalColor.toUpperCase()}.</span>`;
+            }
+            btn.disabled=false; processEndOfGame();
+        }
+    }, 51); 
+});
+
+function updatePrime() {
+    if(!primeHistory.length)return; 
+    let p=0,np=0; primeHistory.forEach(i=>{if(i)p++;else np++;}); 
+    let pr=0,pg=0; primeColorHistory.forEach(c=>{if(c==='red')pr++;else pg++;}); 
+    
+    let t=primeHistory.length;
+    document.getElementById('trend-prime').innerText=Math.round((p/t)*100)+'%'; 
+    document.getElementById('trend-notprime').innerText=Math.round((np/t)*100)+'%';
+    document.getElementById('trend-prime-red').innerText=Math.round((pr/t)*100)+'%'; 
+    document.getElementById('trend-prime-green').innerText=Math.round((pg/t)*100)+'%';
+    
+    let pt="Pattern is mixed!"; let ps="", cs="";
+    
+    if(t>=3){
+        let l3p=primeHistory.slice(-3); 
+        if(l3p.every(x=>x===true)) ps="🔥 3 Primes! Bet NOT PRIME. "; 
+        else if(l3p.every(x=>x===false)) ps="🔥 3 Not Primes! Prime due. ";
+        
+        let l3c=primeColorHistory.slice(-3);
+        if(l3c.every(c=>c==='red')) cs="🔥 3 Reds! Bet GREEN."; 
+        else if(l3c.every(c=>c==='green')) cs="🔥 3 Greens! Bet RED.";
+    }
+    
+    if(ps || cs) pt = ps + cs;
+    document.getElementById('trend-pred-prime').innerText = pt.trim() || "Pattern is mixed!";
+}
+
+/* GAMEOVER */
+function showGameOver() {
+    document.getElementById('go-matches-played').innerText = matchesPlayed; document.getElementById('go-highest-chips').innerText = highestChips; document.getElementById('go-final-rank').innerText = currentRank; 
+    document.getElementById('game-over-modal').style.display = 'flex';
+}
+function resetGame() {
+    matchesPlayed = 0; diceHistory = []; colorHistory = []; primeHistory = []; primeColorHistory = [];
+    document.querySelectorAll('.white-text').forEach(e=>e.innerText='0%'); document.querySelectorAll('.trend-pred').forEach(e=>e.innerText='Waiting...');
+    updateProfileStats(); setupInitialRoulette(); document.getElementById('prime-spinner').innerText = '--'; document.getElementById('prime-spinner').style.color = '#333'; document.getElementById('game-over-modal').style.display = 'none';
+    let msg = (points <= 0) ? "Wait for chips to restock!" : "Ready!";
+    document.getElementById('dice-result').innerText = msg; document.getElementById('color-result').innerText = msg; document.getElementById('prime-result').innerText = msg;
+}
+function returnToMenuFromGameOver() { resetGame(); showScreen('main-menu'); }
