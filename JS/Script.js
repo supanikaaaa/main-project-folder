@@ -7,10 +7,14 @@ let maxChips = 100, regenAmount = 10, regenTimeLimit = 300, regenTimer = regenTi
 let matchesPlayed = 0, highestChips = points, currentRank = "Unranked"; 
 let diceHistory = [], colorHistory = [], primeHistory = [], primeColorHistory = [];
 
-// NEW: Variable to lock the screen during gameplay
 let isGameActive = false; 
 
-// If the user is logged in via PHP, setup the game immediately
+// Stores the function to run after they click "Confirm" in the modal
+let pendingBetCallback = null;
+
+// Tracks if the user selected "Don't ask me again"
+let skipConfirm = false;
+
 if (typeof isUserLoggedIn !== 'undefined' && isUserLoggedIn) {
     setupInitialRoulette(); 
     updateProfileStats();
@@ -27,22 +31,94 @@ function previewImage(input) {
 }
 
 function showScreen(id) { 
-    // NEW: Stop the user from leaving if a game is spinning/rolling!
     if (isGameActive) {
-        alert("Please wait for the current round to finish!");
+        showAlertModal("Please wait for the current round to finish!");
         return; 
     }
-    
     document.querySelectorAll('.screen-container').forEach(s => s.style.display = 'none'); 
     document.getElementById(id).style.display = 'block'; 
+    
+    // Hide the shop (+) button if we are not in the main menu!
+    let shopBtn = document.querySelector('.regen-plus');
+    if (shopBtn) {
+        shopBtn.style.display = (id === 'main-menu') ? 'flex' : 'none';
+    }
 }
 
 function toggleProfile() { 
-    // NEW: Stop the user from opening the profile if a game is active
-    if (isGameActive) return; 
-    
+    if (isGameActive) {
+        showAlertModal("Please wait for the current round to finish!");
+        return; 
+    }
     let m = document.getElementById('profile-modal'); 
     m.style.display = (m.style.display === 'none') ? 'flex' : 'none'; 
+}
+
+function toggleShop() {
+    if (isGameActive) {
+        showAlertModal("Please wait for the current round to finish!");
+        return;
+    }
+    let m = document.getElementById('shop-modal');
+    m.style.display = (m.style.display === 'none') ? 'flex' : 'none';
+}
+
+// --- CONFIRM MODAL LOGIC WITH CHECKBOX ---
+function showConfirmModal(message, callback) {
+    // If they checked the box previously, skip the modal and run the bet!
+    if (skipConfirm) {
+        callback();
+        return;
+    }
+    
+    document.getElementById('confirm-msg').innerText = message;
+    pendingBetCallback = callback;
+    
+    // Reset the checkbox visual state when showing
+    document.getElementById('skip-confirm-checkbox').checked = false; 
+    
+    document.getElementById('confirm-modal').style.display = 'flex';
+}
+
+function closeConfirmModal() {
+    document.getElementById('confirm-modal').style.display = 'none';
+    pendingBetCallback = null;
+}
+
+function executePendingBet() {
+    if (typeof pendingBetCallback === 'function') {
+        // Did they check the box just now?
+        if (document.getElementById('skip-confirm-checkbox').checked) {
+            skipConfirm = true; // Save choice for future bets
+        }
+        
+        let runBet = pendingBetCallback;
+        document.getElementById('confirm-modal').style.display = 'none';
+        pendingBetCallback = null;
+        runBet();
+    }
+}
+
+// --- ALERT MODAL LOGIC ---
+function showAlertModal(message) {
+    document.getElementById('alert-msg').innerText = message;
+    document.getElementById('alert-modal').style.display = 'flex';
+}
+
+function closeAlertModal() {
+    document.getElementById('alert-modal').style.display = 'none';
+}
+// ------------------------------------
+
+function buyChips(chipsBought, cost) {
+    let sfx = new Audio('cashtopup.mp3');
+    sfx.play().catch(e => console.log(e));
+    
+    points += chipsBought;
+    updateProfileStats();
+    toggleShop();
+    
+    showAlertModal(`Success! You bought ${chipsBought} chips for $${cost}.`);
 }
 
 function updateProfileStats() {
@@ -118,56 +194,58 @@ document.getElementById('roll-btn').addEventListener('click', () => {
     const btn = document.getElementById('roll-btn');
     const txt = document.getElementById('dice-result');
     
-    if (isNaN(amt) || amt <= 0 || amt > points) return alert("Invalid Bet!"); 
+    if (isNaN(amt) || amt <= 0 || amt > points) {
+        return showAlertModal("Invalid Bet! Check your chips."); 
+    }
     
-    // NEW: Lock the screen
-    isGameActive = true;
+    let patternName = document.getElementById('dice-bet-type').options[document.getElementById('dice-bet-type').selectedIndex].text;
     
-    btn.disabled = true; 
-    txt.innerText = "Rolling..."; 
-    totalSpent += amt; 
-    points -= amt; 
-    updateProfileStats();
-    
-    let sfx = new Audio('soundeffect2.mp3');
-    sfx.play().catch(e => console.log("Audio play blocked", e));
+    showConfirmModal(`Are you sure you want to bet ${amt} chips on ${patternName}?`, () => {
+        isGameActive = true;
+        btn.disabled = true; 
+        txt.innerText = "Rolling..."; 
+        totalSpent += amt; 
+        points -= amt; 
+        updateProfileStats();
+        
+        let sfx = new Audio('soundeffect2.mp3');
+        sfx.play().catch(e => console.log("Audio play blocked", e));
 
-    const n1 = Math.floor(Math.random() * 6) + 1;
-    const n2 = Math.floor(Math.random() * 6) + 1;
-    
-    document.getElementById('die-1').style.transform = `rotateX(${getRot(n1).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(n1).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
-    document.getElementById('die-2').style.transform = `rotateX(${getRot(n2).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(n2).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
-    
-    setTimeout(() => {
-        const t = n1 + n2; 
-        diceHistory.push(t); 
-        if(diceHistory.length > 10) diceHistory.shift(); 
-        updateDice();
+        const n1 = Math.floor(Math.random() * 6) + 1;
+        const n2 = Math.floor(Math.random() * 6) + 1;
         
-        let win = false, rew = 10, m = 2;
-        switch(type) { 
-            case 'odd': if(t%2!==0) win=true; break; 
-            case 'even': if(t%2===0) win=true; break; 
-            case 'low': if(t<=6) win=true; break; 
-            case 'high': if(t>=8) win=true; break; 
-            case 'lucky7': if(t===7){win=true; rew=20; m=4;} break; 
-        }
+        document.getElementById('die-1').style.transform = `rotateX(${getRot(n1).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(n1).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
+        document.getElementById('die-2').style.transform = `rotateX(${getRot(n2).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(n2).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
         
-        if (win) { 
-            new Audio('winning.mp3').play().catch(e => console.log(e));
-            let w = amt * m; points += w; totalWon += w; 
-            txt.innerHTML = `<span class="win-text">YOU WIN! Payout: ${w} Chips</span>`; 
-        } else { 
-            new Audio('lossing.mp3').play().catch(e => console.log(e));
-            txt.innerHTML = `<span class="lose-text">LOSE! Rolled ${t}.</span>`; 
-        }
-        
-        // NEW: Unlock the screen and button
-        btn.disabled = false; 
-        isGameActive = false;
-        
-        processEndOfGame();
-    }, 1280); 
+        setTimeout(() => {
+            const t = n1 + n2; 
+            diceHistory.push(t); 
+            if(diceHistory.length > 10) diceHistory.shift(); 
+            updateDice();
+            
+            let win = false, rew = 10, m = 2;
+            switch(type) { 
+                case 'odd': if(t%2!==0) win=true; break; 
+                case 'even': if(t%2===0) win=true; break; 
+                case 'low': if(t<=6) win=true; break; 
+                case 'high': if(t>=8) win=true; break; 
+                case 'lucky7': if(t===7){win=true; rew=20; m=4;} break; 
+            }
+            
+            if (win) { 
+                new Audio('winning.mp3').play().catch(e => console.log(e));
+                let w = amt * m; points += w; totalWon += w; 
+                txt.innerHTML = `<span class="win-text">YOU WIN! Payout: ${w} Chips</span>`; 
+            } else { 
+                new Audio('lossing.mp3').play().catch(e => console.log(e));
+                txt.innerHTML = `<span class="lose-text">LOSE! Rolled ${t}.</span>`; 
+            }
+            
+            btn.disabled = false; 
+            isGameActive = false;
+            processEndOfGame();
+        }, 1280); 
+    });
 });
 
 function updateDice() {
@@ -236,71 +314,71 @@ document.getElementById('color-btn').addEventListener('click', () => {
     const txt = document.getElementById('color-result');
     const track = document.getElementById('color-track');
     
-    if (isNaN(amt) || amt <= 0 || amt > points) return alert("Invalid Bet!"); 
+    if (isNaN(amt) || amt <= 0 || amt > points) {
+        return showAlertModal("Invalid Bet! Check your chips."); 
+    }
     
-    // NEW: Lock the screen
-    isGameActive = true;
-    
-    btn.disabled = true; 
-    txt.innerText = "Spinning..."; 
-    totalSpent += amt; 
-    points -= amt; 
-    updateProfileStats();
-    
-    let sfx = new Audio('soundeffect1.mp3');
-    sfx.play().catch(e => console.log(e));
-    
-    const rand = Math.random(); 
-    const finalColorStr = rand < 0.01 ? 'green' : (rand < 0.505 ? 'red' : 'black');
-    
-    track.style.transition = 'none'; 
-    track.style.transform = 'translateX(0)'; 
-    track.innerHTML = '';
-    
-    let colors = generateTrackArray(100);
-    colors.forEach(c => { 
-        let block = document.createElement('div'); 
-        block.className = 'roulette-block block-' + c; 
-        block.innerHTML = c === 'green' ? '🟢' : (c === 'red' ? '🔴' : '⚫'); 
-        track.appendChild(block); 
+    showConfirmModal(`Are you sure you want to bet ${amt} chips on ${type.toUpperCase()}?`, () => {
+        isGameActive = true;
+        btn.disabled = true; 
+        txt.innerText = "Spinning..."; 
+        totalSpent += amt; 
+        points -= amt; 
+        updateProfileStats();
+        
+        let sfx = new Audio('soundeffect1.mp3');
+        sfx.play().catch(e => console.log(e));
+        
+        const rand = Math.random(); 
+        const finalColorStr = rand < 0.01 ? 'green' : (rand < 0.505 ? 'red' : 'black');
+        
+        track.style.transition = 'none'; 
+        track.style.transform = 'translateX(0)'; 
+        track.innerHTML = '';
+        
+        let colors = generateTrackArray(100);
+        colors.forEach(c => { 
+            let block = document.createElement('div'); 
+            block.className = 'roulette-block block-' + c; 
+            block.innerHTML = c === 'green' ? '🟢' : (c === 'red' ? '🔴' : '⚫'); 
+            track.appendChild(block); 
+        });
+
+        let targetIndex = 60 + Math.floor(Math.random() * 15);
+        while (colors[targetIndex] !== finalColorStr) targetIndex++; 
+
+        void track.offsetWidth; 
+        const blockWidth = track.children[0].offsetWidth; 
+        const containerWidth = document.querySelector('.roulette-container').offsetWidth;
+        const targetCenter = (targetIndex * blockWidth) + (blockWidth / 2);
+        const randomOffset = (Math.random() * (blockWidth * 0.6)) - (blockWidth * 0.3);
+        const exactStopPos = targetCenter - (containerWidth / 2) + randomOffset;
+
+        track.style.transition = 'transform 8.31s cubic-bezier(0.15, 0.85, 0.3, 1)';
+        track.style.transform = `translateX(-${exactStopPos}px)`;
+
+        setTimeout(() => {
+            colorHistory.push(finalColorStr); 
+            if(colorHistory.length>10) colorHistory.shift(); 
+            updateColor();
+            
+            if(type === finalColorStr){ 
+                new Audio('winning.mp3').play().catch(e => console.log(e));
+                let mult = finalColorStr === 'green' ? 4 : 2; 
+                let w = amt * mult; 
+                points += w; 
+                totalWon += w; 
+                txt.innerHTML = `<span class="win-text">WIN! ${finalColorStr.toUpperCase()} pays ${w} Chips</span>`; 
+            } else { 
+                new Audio('lossing.mp3').play().catch(e => console.log(e));
+                txt.innerHTML = `<span class="lose-text">LOSE! Landed on ${finalColorStr.toUpperCase()}.</span>`; 
+            }
+            
+            btn.disabled = false; 
+            isGameActive = false;
+            processEndOfGame();
+        }, 8310); 
     });
-
-    let targetIndex = 60 + Math.floor(Math.random() * 15);
-    while (colors[targetIndex] !== finalColorStr) targetIndex++; 
-
-    void track.offsetWidth; 
-    const blockWidth = track.children[0].offsetWidth; 
-    const containerWidth = document.querySelector('.roulette-container').offsetWidth;
-    const targetCenter = (targetIndex * blockWidth) + (blockWidth / 2);
-    const randomOffset = (Math.random() * (blockWidth * 0.6)) - (blockWidth * 0.3);
-    const exactStopPos = targetCenter - (containerWidth / 2) + randomOffset;
-
-    track.style.transition = 'transform 8.31s cubic-bezier(0.15, 0.85, 0.3, 1)';
-    track.style.transform = `translateX(-${exactStopPos}px)`;
-
-    setTimeout(() => {
-        colorHistory.push(finalColorStr); 
-        if(colorHistory.length>10) colorHistory.shift(); 
-        updateColor();
-        
-        if(type === finalColorStr){ 
-            new Audio('winning.mp3').play().catch(e => console.log(e));
-            let mult = finalColorStr === 'green' ? 4 : 2; 
-            let w = amt * mult; 
-            points += w; 
-            totalWon += w; 
-            txt.innerHTML = `<span class="win-text">WIN! ${finalColorStr.toUpperCase()} pays ${w} Chips</span>`; 
-        } else { 
-            new Audio('lossing.mp3').play().catch(e => console.log(e));
-            txt.innerHTML = `<span class="lose-text">LOSE! Landed on ${finalColorStr.toUpperCase()}.</span>`; 
-        }
-        
-        // NEW: Unlock the screen and button
-        btn.disabled = false; 
-        isGameActive = false;
-        
-        processEndOfGame();
-    }, 8310); 
 });
 
 function updateColor() {
@@ -343,74 +421,79 @@ document.getElementById('prime-btn').addEventListener('click', () => {
     const txt = document.getElementById('prime-result');
     const sp = document.getElementById('prime-spinner');
     
-    if (isNaN(amt) || amt <= 0 || amt > points) return alert("Invalid Bet!"); 
+    if (isNaN(amt) || amt <= 0 || amt > points) {
+        return showAlertModal("Invalid Bet! Check your chips."); 
+    }
     
-    // NEW: Lock the screen
-    isGameActive = true;
+    let primeText = primeType === 'prime' ? 'PRIME' : 'NOT PRIME';
     
-    btn.disabled = true; 
-    txt.innerText = "Spinning..."; 
-    totalSpent += amt; 
-    points -= amt; 
-    updateProfileStats();
-    
-    let sfx = new Audio('soundeffect3.mp3');
-    sfx.play().catch(e => console.log(e));
-    
-    let s = 0;
-    let anim = setInterval(() => {
-        let num = Math.floor(Math.random()*30)+1; 
-        sp.innerText = num;
-        sp.style.color = (num % 2 !== 0) ? '#e74c3c' : '#2ecc71'; 
-        s++;
+    showConfirmModal(`Are you sure you want to bet ${amt} chips on ${primeText} & ${colorType.toUpperCase()}?`, () => {
+        isGameActive = true;
+        btn.disabled = true; 
+        txt.innerText = "Spinning..."; 
+        totalSpent += amt; 
+        points -= amt; 
+        updateProfileStats();
         
-        if(s >= 40) { 
-            clearInterval(anim); 
+        let sfx = new Audio('soundeffect3.mp3');
+        sfx.play().catch(e => console.log(e));
+        
+        let s = 0;
+        let anim = setInterval(() => {
+            let num = Math.floor(Math.random()*30)+1; 
+            sp.innerText = num;
             
-            const finalNum = Math.floor(Math.random()*30)+1; 
-            const finalColor = finalNum % 2 !== 0 ? 'red' : 'green';
-            const finalIsPrime = isPrime(finalNum);
+            sp.style.color = Math.random() < 0.5 ? '#e74c3c' : '#2ecc71'; 
+            s++;
             
-            sp.innerText = finalNum; 
-            sp.style.color = (finalColor === 'red') ? '#e74c3c' : '#2ecc71'; 
-            
-            primeHistory.push(finalIsPrime); 
-            if(primeHistory.length>10) primeHistory.shift(); 
-            
-            primeColorHistory.push(finalColor); 
-            if(primeColorHistory.length>10) primeColorHistory.shift(); 
-            
-            updatePrime();
-            
-            let isPrimeCorrect = (primeType === 'prime' && finalIsPrime) || (primeType === 'not_prime' && !finalIsPrime);
-            let isColorCorrect = (colorType === finalColor);
-            
-            let win = false; let m = 0;
-            
-            if (isPrimeCorrect && isColorCorrect) { win = true; m = 2; } 
-            else if (isPrimeCorrect || isColorCorrect) { win = true; m = 1.5; }
+            if(s >= 40) { 
+                clearInterval(anim); 
+                
+                const finalNum = Math.floor(Math.random()*30)+1; 
+                
+                const finalColor = Math.random() < 0.5 ? 'red' : 'green';
+                const finalIsPrime = isPrime(finalNum);
+                
+                sp.innerText = finalNum; 
+                sp.style.color = (finalColor === 'red') ? '#e74c3c' : '#2ecc71'; 
+                
+                primeHistory.push(finalIsPrime); 
+                if(primeHistory.length>10) primeHistory.shift(); 
+                
+                primeColorHistory.push(finalColor); 
+                if(primeColorHistory.length>10) primeColorHistory.shift(); 
+                
+                updatePrime();
+                
+                let isPrimeCorrect = (primeType === 'prime' && finalIsPrime) || (primeType === 'not_prime' && !finalIsPrime);
+                let isColorCorrect = (colorType === finalColor);
+                
+                let win = false; let m = 0;
+                
+                if (isPrimeCorrect && isColorCorrect) { win = true; m = 2; } 
+                else if (isPrimeCorrect || isColorCorrect) { win = true; m = 1.5; }
 
-            let primeTextDisplay = finalIsPrime ? 'PRIME NUMBER' : 'NOT PRIME NUMBER';
-            let colorTextDisplay = isColorCorrect ? 'CORRECT COLOR' : finalColor.toUpperCase();
+                // FIX: Updated the text strings to match your exact format request
+                let primeTextDisplay = finalIsPrime ? 'PRIME number' : 'NOT PRIME number';
+                let colorTextDisplay = isColorCorrect ? 'CORRECT color' : 'WRONG COLOR guess';
 
-            if(win){ 
-                new Audio('winning.mp3').play().catch(e => console.log(e));
-                let w = Math.floor(amt * m); 
-                points += w; 
-                totalWon += w; 
-                txt.innerHTML = `<span class="win-text">WIN! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}. Pays ${w} Chips</span>`; 
-            } else {
-                new Audio('lossing.mp3').play().catch(e => console.log(e));
-                txt.innerHTML = `<span class="lose-text">LOSE! ${finalNum} is ${primeTextDisplay}, ${finalColor.toUpperCase()}.</span>`;
+                if(win){ 
+                    new Audio('winning.mp3').play().catch(e => console.log(e));
+                    let w = Math.floor(amt * m); 
+                    points += w; 
+                    totalWon += w; 
+                    txt.innerHTML = `<span class="win-text">WIN! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}. Pays ${w} Chips</span>`; 
+                } else {
+                    new Audio('lossing.mp3').play().catch(e => console.log(e));
+                    txt.innerHTML = `<span class="lose-text">LOSE! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}.</span>`;
+                }
+                
+                btn.disabled=false; 
+                isGameActive = false;
+                processEndOfGame();
             }
-            
-            // NEW: Unlock the screen and button
-            btn.disabled=false; 
-            isGameActive = false;
-            
-            processEndOfGame();
-        }
-    }, 51); 
+        }, 51); 
+    });
 });
 
 function updatePrime() {
