@@ -99,9 +99,17 @@ function executePendingBet() {
     }
 }
 
-// --- ALERT MODAL LOGIC ---
-function showAlertModal(message) {
+// --- ALERT MODAL LOGIC (FIXED FOR CONGRATS) ---
+function showAlertModal(message, title = "⚠️ ACTION BLOCKED", color = "#e74c3c") {
     document.getElementById('alert-msg').innerText = message;
+    
+    // Find the title element and update it dynamically
+    let modalTitle = document.querySelector('#alert-modal h3');
+    if (modalTitle) {
+        modalTitle.innerText = title;
+        modalTitle.style.color = color;
+    }
+    
     document.getElementById('alert-modal').style.display = 'flex';
 }
 
@@ -118,7 +126,8 @@ function buyChips(chipsBought, cost) {
     updateProfileStats();
     toggleShop();
     
-    showAlertModal(`Success! You bought ${chipsBought} chips for $${cost}.`);
+    // Use the custom title and green color for successful purchase
+    showAlertModal(`Success! You bought ${chipsBought} chips for $${cost}.`, "🎉 CONGRATS!", "#2ecc71");
 }
 
 function updateProfileStats() {
@@ -204,47 +213,50 @@ document.getElementById('roll-btn').addEventListener('click', () => {
         isGameActive = true;
         btn.disabled = true; 
         txt.innerText = "Rolling..."; 
-        totalSpent += amt; 
-        points -= amt; 
-        updateProfileStats();
         
         let sfx = new Audio('soundeffect2.mp3');
         sfx.play().catch(e => console.log("Audio play blocked", e));
 
-        const n1 = Math.floor(Math.random() * 6) + 1;
-        const n2 = Math.floor(Math.random() * 6) + 1;
-        
-        document.getElementById('die-1').style.transform = `rotateX(${getRot(n1).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(n1).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
-        document.getElementById('die-2').style.transform = `rotateX(${getRot(n2).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(n2).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
-        
-        setTimeout(() => {
-            const t = n1 + n2; 
-            diceHistory.push(t); 
-            if(diceHistory.length > 10) diceHistory.shift(); 
-            updateDice();
-            
-            let win = false, rew = 10, m = 2;
-            switch(type) { 
-                case 'odd': if(t%2!==0) win=true; break; 
-                case 'even': if(t%2===0) win=true; break; 
-                case 'low': if(t<=6) win=true; break; 
-                case 'high': if(t>=8) win=true; break; 
-                case 'lucky7': if(t===7){win=true; rew=20; m=4;} break; 
+        // Fetch PHP Logic
+        fetch('game_logic.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ game: 'dice', betAmount: amt, betType: type })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                showAlertModal(data.error);
+                btn.disabled = false; isGameActive = false; return;
             }
+
+            points = data.newPoints;
+            totalSpent += amt;
+            if(data.win) totalWon += data.reward;
+            updateProfileStats();
+
+            // Use PHP's numbers for the animation
+            document.getElementById('die-1').style.transform = `rotateX(${getRot(data.n1).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(data.n1).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
+            document.getElementById('die-2').style.transform = `rotateX(${getRot(data.n2).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(data.n2).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
             
-            if (win) { 
-                new Audio('winning.mp3').play().catch(e => console.log(e));
-                let w = amt * m; points += w; totalWon += w; 
-                txt.innerHTML = `<span class="win-text">YOU WIN! Payout: ${w} Chips</span>`; 
-            } else { 
-                new Audio('lossing.mp3').play().catch(e => console.log(e));
-                txt.innerHTML = `<span class="lose-text">LOSE! Rolled ${t}.</span>`; 
-            }
-            
-            btn.disabled = false; 
-            isGameActive = false;
-            processEndOfGame();
-        }, 1280); 
+            setTimeout(() => {
+                diceHistory.push(data.total); 
+                if(diceHistory.length > 10) diceHistory.shift(); 
+                updateDice();
+                
+                if (data.win) { 
+                    new Audio('winning.mp3').play().catch(e => console.log(e));
+                    txt.innerHTML = `<span class="win-text">YOU WIN! Payout: ${data.reward} Chips</span>`; 
+                } else { 
+                    new Audio('lossing.mp3').play().catch(e => console.log(e));
+                    txt.innerHTML = `<span class="lose-text">LOSE! Rolled ${data.total}.</span>`; 
+                }
+                
+                btn.disabled = false; 
+                isGameActive = false;
+                processEndOfGame();
+            }, 1280); 
+        }).catch(err => { console.error(err); btn.disabled = false; isGameActive = false; });
     });
 });
 
@@ -322,62 +334,74 @@ document.getElementById('color-btn').addEventListener('click', () => {
         isGameActive = true;
         btn.disabled = true; 
         txt.innerText = "Spinning..."; 
-        totalSpent += amt; 
-        points -= amt; 
-        updateProfileStats();
         
         let sfx = new Audio('soundeffect1.mp3');
         sfx.play().catch(e => console.log(e));
         
-        const rand = Math.random(); 
-        const finalColorStr = rand < 0.01 ? 'green' : (rand < 0.505 ? 'red' : 'black');
-        
-        track.style.transition = 'none'; 
-        track.style.transform = 'translateX(0)'; 
-        track.innerHTML = '';
-        
-        let colors = generateTrackArray(100);
-        colors.forEach(c => { 
-            let block = document.createElement('div'); 
-            block.className = 'roulette-block block-' + c; 
-            block.innerHTML = c === 'green' ? '🟢' : (c === 'red' ? '🔴' : '⚫'); 
-            track.appendChild(block); 
-        });
-
-        let targetIndex = 60 + Math.floor(Math.random() * 15);
-        while (colors[targetIndex] !== finalColorStr) targetIndex++; 
-
-        void track.offsetWidth; 
-        const blockWidth = track.children[0].offsetWidth; 
-        const containerWidth = document.querySelector('.roulette-container').offsetWidth;
-        const targetCenter = (targetIndex * blockWidth) + (blockWidth / 2);
-        const randomOffset = (Math.random() * (blockWidth * 0.6)) - (blockWidth * 0.3);
-        const exactStopPos = targetCenter - (containerWidth / 2) + randomOffset;
-
-        track.style.transition = 'transform 8.31s cubic-bezier(0.15, 0.85, 0.3, 1)';
-        track.style.transform = `translateX(-${exactStopPos}px)`;
-
-        setTimeout(() => {
-            colorHistory.push(finalColorStr); 
-            if(colorHistory.length>10) colorHistory.shift(); 
-            updateColor();
-            
-            if(type === finalColorStr){ 
-                new Audio('winning.mp3').play().catch(e => console.log(e));
-                let mult = finalColorStr === 'green' ? 4 : 2; 
-                let w = amt * mult; 
-                points += w; 
-                totalWon += w; 
-                txt.innerHTML = `<span class="win-text">WIN! ${finalColorStr.toUpperCase()} pays ${w} Chips</span>`; 
-            } else { 
-                new Audio('lossing.mp3').play().catch(e => console.log(e));
-                txt.innerHTML = `<span class="lose-text">LOSE! Landed on ${finalColorStr.toUpperCase()}.</span>`; 
+        // Fetch PHP Logic
+        fetch('game_logic.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ game: 'color', betAmount: amt, betType: type })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                showAlertModal(data.error);
+                btn.disabled = false; isGameActive = false; return;
             }
+
+            points = data.newPoints;
+            totalSpent += amt;
+            if(data.win) totalWon += data.reward;
+            updateProfileStats();
+
+            // Use PHP's official color for the spin animation
+            const finalColorStr = data.finalColorStr;
             
-            btn.disabled = false; 
-            isGameActive = false;
-            processEndOfGame();
-        }, 8310); 
+            track.style.transition = 'none'; 
+            track.style.transform = 'translateX(0)'; 
+            track.innerHTML = '';
+            
+            let colors = generateTrackArray(100);
+            colors.forEach(c => { 
+                let block = document.createElement('div'); 
+                block.className = 'roulette-block block-' + c; 
+                block.innerHTML = c === 'green' ? '🟢' : (c === 'red' ? '🔴' : '⚫'); 
+                track.appendChild(block); 
+            });
+
+            let targetIndex = 60 + Math.floor(Math.random() * 15);
+            while (colors[targetIndex] !== finalColorStr) targetIndex++; 
+
+            void track.offsetWidth; 
+            const blockWidth = track.children[0].offsetWidth; 
+            const containerWidth = document.querySelector('.roulette-container').offsetWidth;
+            const targetCenter = (targetIndex * blockWidth) + (blockWidth / 2);
+            const randomOffset = (Math.random() * (blockWidth * 0.6)) - (blockWidth * 0.3);
+            const exactStopPos = targetCenter - (containerWidth / 2) + randomOffset;
+
+            track.style.transition = 'transform 8.31s cubic-bezier(0.15, 0.85, 0.3, 1)';
+            track.style.transform = `translateX(-${exactStopPos}px)`;
+
+            setTimeout(() => {
+                colorHistory.push(finalColorStr); 
+                if(colorHistory.length>10) colorHistory.shift(); 
+                updateColor();
+                
+                if(data.win){ 
+                    new Audio('winning.mp3').play().catch(e => console.log(e));
+                    txt.innerHTML = `<span class="win-text">WIN! ${finalColorStr.toUpperCase()} pays ${data.reward} Chips</span>`; 
+                } else { 
+                    new Audio('lossing.mp3').play().catch(e => console.log(e));
+                    txt.innerHTML = `<span class="lose-text">LOSE! Landed on ${finalColorStr.toUpperCase()}.</span>`; 
+                }
+                
+                btn.disabled = false; 
+                isGameActive = false;
+                processEndOfGame();
+            }, 8310); 
+        }).catch(err => { console.error(err); btn.disabled = false; isGameActive = false; });
     });
 });
 
@@ -407,12 +431,6 @@ function updateColor() {
 /* =========================================
    GAME 3: PRIME PREDICTOR
    ========================================= */
-const isPrime = n => { 
-    if(n<=1) return false; 
-    for(let i=2; i<=Math.sqrt(n); i++) if(n%i===0) return false; 
-    return true; 
-};
-
 document.getElementById('prime-btn').addEventListener('click', () => {
     const amt = parseInt(document.getElementById('prime-bet-amount').value);
     const primeType = document.getElementById('prime-bet-type').value;
@@ -431,68 +449,71 @@ document.getElementById('prime-btn').addEventListener('click', () => {
         isGameActive = true;
         btn.disabled = true; 
         txt.innerText = "Spinning..."; 
-        totalSpent += amt; 
-        points -= amt; 
-        updateProfileStats();
         
         let sfx = new Audio('soundeffect3.mp3');
         sfx.play().catch(e => console.log(e));
         
-        let s = 0;
-        let anim = setInterval(() => {
-            let num = Math.floor(Math.random()*30)+1; 
-            sp.innerText = num;
-            
-            sp.style.color = Math.random() < 0.5 ? '#e74c3c' : '#2ecc71'; 
-            s++;
-            
-            if(s >= 40) { 
-                clearInterval(anim); 
-                
-                const finalNum = Math.floor(Math.random()*30)+1; 
-                
-                const finalColor = Math.random() < 0.5 ? 'red' : 'green';
-                const finalIsPrime = isPrime(finalNum);
-                
-                sp.innerText = finalNum; 
-                sp.style.color = (finalColor === 'red') ? '#e74c3c' : '#2ecc71'; 
-                
-                primeHistory.push(finalIsPrime); 
-                if(primeHistory.length>10) primeHistory.shift(); 
-                
-                primeColorHistory.push(finalColor); 
-                if(primeColorHistory.length>10) primeColorHistory.shift(); 
-                
-                updatePrime();
-                
-                let isPrimeCorrect = (primeType === 'prime' && finalIsPrime) || (primeType === 'not_prime' && !finalIsPrime);
-                let isColorCorrect = (colorType === finalColor);
-                
-                let win = false; let m = 0;
-                
-                if (isPrimeCorrect && isColorCorrect) { win = true; m = 2; } 
-                else if (isPrimeCorrect || isColorCorrect) { win = true; m = 1.5; }
-
-                // FIX: Updated the text strings to match your exact format request
-                let primeTextDisplay = finalIsPrime ? 'PRIME number' : 'NOT PRIME number';
-                let colorTextDisplay = isColorCorrect ? 'CORRECT color' : 'WRONG COLOR guess';
-
-                if(win){ 
-                    new Audio('winning.mp3').play().catch(e => console.log(e));
-                    let w = Math.floor(amt * m); 
-                    points += w; 
-                    totalWon += w; 
-                    txt.innerHTML = `<span class="win-text">WIN! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}. Pays ${w} Chips</span>`; 
-                } else {
-                    new Audio('lossing.mp3').play().catch(e => console.log(e));
-                    txt.innerHTML = `<span class="lose-text">LOSE! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}.</span>`;
-                }
-                
-                btn.disabled=false; 
-                isGameActive = false;
-                processEndOfGame();
+        // Fetch PHP Logic
+        fetch('game_logic.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ game: 'prime', betAmount: amt, primeType: primeType, colorType: colorType })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                showAlertModal(data.error);
+                btn.disabled = false; isGameActive = false; return;
             }
-        }, 51); 
+
+            points = data.newPoints;
+            totalSpent += amt;
+            if(data.win) totalWon += data.reward;
+            updateProfileStats();
+
+            // Run dummy animation while waiting to show PHP's official result
+            let s = 0;
+            let anim = setInterval(() => {
+                sp.innerText = Math.floor(Math.random()*30)+1;
+                sp.style.color = Math.random() < 0.5 ? '#e74c3c' : '#2ecc71'; 
+                s++;
+                
+                if(s >= 40) { 
+                    clearInterval(anim); 
+                    
+                    // Display PHP's result
+                    const finalNum = data.finalNum; 
+                    const finalColor = data.finalColor;
+                    const finalIsPrime = data.finalIsPrime;
+                    
+                    sp.innerText = finalNum; 
+                    sp.style.color = (finalColor === 'red') ? '#e74c3c' : '#2ecc71'; 
+                    
+                    primeHistory.push(finalIsPrime); 
+                    if(primeHistory.length>10) primeHistory.shift(); 
+                    
+                    primeColorHistory.push(finalColor); 
+                    if(primeColorHistory.length>10) primeColorHistory.shift(); 
+                    
+                    updatePrime();
+                    
+                    let primeTextDisplay = finalIsPrime ? 'PRIME number' : 'NOT PRIME number';
+                    let colorTextDisplay = data.isColorCorrect ? 'CORRECT color' : 'WRONG COLOR guess';
+
+                    if(data.win){ 
+                        new Audio('winning.mp3').play().catch(e => console.log(e));
+                        txt.innerHTML = `<span class="win-text">WIN! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}. Pays ${data.reward} Chips</span>`; 
+                    } else {
+                        new Audio('lossing.mp3').play().catch(e => console.log(e));
+                        txt.innerHTML = `<span class="lose-text">LOSE! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}.</span>`;
+                    }
+                    
+                    btn.disabled=false; 
+                    isGameActive = false;
+                    processEndOfGame();
+                }
+            }, 51); 
+        }).catch(err => { console.error(err); btn.disabled = false; isGameActive = false; });
     });
 });
 
