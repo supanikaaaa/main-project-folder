@@ -12,9 +12,27 @@ if (!isset($_SESSION['username'])) {
 // 2. Get the incoming data from JavaScript
 $data = json_decode(file_get_contents('php://input'), true);
 $game = $data['game'] ?? '';
+
+/* =========================================
+   NEW: TOP-UP / REGEN SYNC LOGIC
+   ========================================= */
+if ($game === 'topup') {
+    $amount = (int)($data['amount'] ?? 0);
+    if ($amount > 0) {
+        $_SESSION['points'] += $amount;
+        echo json_encode(['status' => 'success', 'newPoints' => $_SESSION['points']]);
+    } else {
+        echo json_encode(['error' => 'Invalid top-up amount']);
+    }
+    exit(); // Stop here so it doesn't run the bet checks below
+}
+
+/* =========================================
+   NORMAL GAME BET CHECKS
+   ========================================= */
 $betAmount = (int)($data['betAmount'] ?? 0);
 
-// Basic security check
+// Basic security check for bets
 if ($betAmount <= 0 || $betAmount > $_SESSION['points']) {
     echo json_encode(['error' => 'Invalid bet amount']);
     exit();
@@ -93,36 +111,31 @@ elseif ($game === 'color') {
 }
 
 /* =========================================
-   GAME 3: PRIME PREDICTOR LOGIC
+   GAME 3: PRIME PREDICTOR LOGIC (50/50 ODDS)
    ========================================= */
 elseif ($game === 'prime') {
     $primeType = $data['primeType'] ?? '';
-    $colorType = $data['colorType'] ?? '';
 
-    $finalNum = rand(1, 30);
-    $finalColor = (rand(0, 1) === 0) ? 'red' : 'green';
+    // The 50/50 Requirement: First, decide if the result will be prime or not
+    $isItGoingToBePrime = (rand(0, 1) === 0);
 
-    // Helper function for logic
-    function isPrimePhp($n) {
-        if ($n <= 1) return false;
-        for ($i = 2; $i <= sqrt($n); $i++) {
-            if ($n % $i == 0) return false;
-        }
-        return true;
+    if ($isItGoingToBePrime) {
+        // Pick randomly from the 10 Prime numbers between 1-30
+        $primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29];
+        $finalNum = $primes[array_rand($primes)];
+        $finalIsPrime = true;
+    } else {
+        // Pick randomly from the 20 Non-Prime numbers between 1-30
+        $nonPrimes = [1, 4, 6, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21, 22, 24, 25, 26, 27, 28, 30];
+        $finalNum = $nonPrimes[array_rand($nonPrimes)];
+        $finalIsPrime = false;
     }
 
-    $finalIsPrime = isPrimePhp($finalNum);
-    $isPrimeCorrect = ($primeType === 'prime' && $finalIsPrime) || ($primeType === 'not_prime' && !$finalIsPrime);
-    $isColorCorrect = ($colorType === $finalColor);
-
-    $win = ($isPrimeCorrect || $isColorCorrect);
-    $multiplier = 0;
-
-    if ($isPrimeCorrect && $isColorCorrect) { $multiplier = 2; } 
-    elseif ($isPrimeCorrect || $isColorCorrect) { $multiplier = 1.5; }
+    $win = ($primeType === 'prime' && $finalIsPrime) || ($primeType === 'not_prime' && !$finalIsPrime);
 
     $reward = 0;
     if ($win) {
+        $multiplier = 2; // Standard 2x payout for a 50/50 bet
         $reward = floor($betAmount * $multiplier);
         $_SESSION['points'] += $reward;
         $_SESSION['total_won'] += $reward;
@@ -131,9 +144,7 @@ elseif ($game === 'prime') {
     echo json_encode([
         'status' => 'success',
         'finalNum' => $finalNum,
-        'finalColor' => $finalColor,
         'finalIsPrime' => $finalIsPrime,
-        'isColorCorrect' => $isColorCorrect,
         'win' => $win,
         'reward' => $reward,
         'newPoints' => $_SESSION['points']
