@@ -1,11 +1,11 @@
-// Check if PHP passed us any saved points, otherwise default to 100
-let points = typeof window.serverPoints !== 'undefined' ? window.serverPoints : 100;
+// Check if PHP passed us any saved points, otherwise default to 20
+let points = typeof window.serverPoints !== 'undefined' ? window.serverPoints : 20;
 let totalWon = typeof window.serverTotalWon !== 'undefined' ? window.serverTotalWon : 0;
 let totalSpent = typeof window.serverTotalSpent !== 'undefined' ? window.serverTotalSpent : 0;
 
 let maxChips = 100, regenAmount = 10, regenTimeLimit = 300, regenTimer = regenTimeLimit; 
 let matchesPlayed = 0, highestChips = points, currentRank = "Unranked"; 
-let diceHistory = [], colorHistory = [], primeHistory = [], primeColorHistory = [];
+let diceHistory = [], colorHistory = [], primeHistory = [];
 
 let isGameActive = false; 
 
@@ -61,6 +61,34 @@ function toggleShop() {
     }
     let m = document.getElementById('shop-modal');
     m.style.display = (m.style.display === 'none') ? 'flex' : 'none';
+}
+
+// --- LOGOUT CONFIRM LOGIC ---
+function showLogoutConfirm() {
+    document.getElementById('profile-modal').style.display = 'none'; // Hide the profile menu
+    document.getElementById('logout-confirm-modal').style.display = 'flex'; // Show the logout prompt
+}
+
+// --- RECHARGE CONFIRM LOGIC ---
+let pendingRechargeAmount = 0;
+let pendingRechargeCost = 0;
+
+function confirmBuyChips(amount, cost) {
+    pendingRechargeAmount = amount;
+    pendingRechargeCost = cost;
+    document.getElementById('recharge-confirm-msg').innerText = `Are you sure you want to buy ${amount} chips for $${cost}?`;
+    document.getElementById('recharge-confirm-modal').style.display = 'flex';
+}
+
+function cancelRecharge() {
+    document.getElementById('recharge-confirm-modal').style.display = 'none';
+    pendingRechargeAmount = 0;
+    pendingRechargeCost = 0;
+}
+
+function executeRecharge() {
+    document.getElementById('recharge-confirm-modal').style.display = 'none';
+    buyChips(pendingRechargeAmount, pendingRechargeCost); // Call the actual buy function
 }
 
 // --- CONFIRM MODAL LOGIC WITH CHECKBOX ---
@@ -122,12 +150,30 @@ function buyChips(chipsBought, cost) {
     let sfx = new Audio('cashtopup.mp3');
     sfx.play().catch(e => console.log(e));
     
-    points += chipsBought;
-    updateProfileStats();
-    toggleShop();
-    
-    // Use the custom title and green color for successful purchase
-    showAlertModal(`Success! You bought ${chipsBought} chips for $${cost}.`, "🎉 CONGRATS!", "#2ecc71");
+    // Sync the purchase with the PHP server
+    fetch('game_logic.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ game: 'topup', amount: chipsBought })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.error) {
+            showAlertModal("Transaction failed: " + data.error);
+            return;
+        }
+        
+        // Server synced! Update local points to match the server
+        points = data.newPoints;
+        updateProfileStats();
+        toggleShop(); // This closes the shop menu
+        
+        showAlertModal(`Success! You bought ${chipsBought} chips for $${cost}.`, "🎉 CONGRATS!", "#2ecc71");
+    })
+    .catch(err => {
+        console.error(err);
+        showAlertModal("Network error while buying chips.");
+    });
 }
 
 function updateProfileStats() {
@@ -162,10 +208,27 @@ setInterval(() => {
         document.getElementById('regen-timer').innerText = `+ ${regenAmount} IN ${m}:${s}`;
         
         if (regenTimer <= 0) { 
-            points += regenAmount; 
-            if (points > maxChips) points = maxChips; 
+            let amountToAdd = regenAmount;
+            if (points + regenAmount > maxChips) {
+                amountToAdd = maxChips - points;
+            }
+            
+            if (amountToAdd > 0) {
+                fetch('game_logic.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ game: 'topup', amount: amountToAdd })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.error) {
+                        points = data.newPoints;
+                        updateProfileStats();
+                    }
+                }).catch(err => console.error(err));
+            }
+            
             regenTimer = regenTimeLimit; 
-            updateProfileStats(); 
         }
     } else { 
         document.getElementById('regen-timer').innerText = "MAX CAPACITY"; 
@@ -214,10 +277,14 @@ document.getElementById('roll-btn').addEventListener('click', () => {
         btn.disabled = true; 
         txt.innerText = "Rolling..."; 
         
+        // IMMEDIATELY deduct bet visually to show the action registered
+        points -= amt;
+        totalSpent += amt;
+        updateProfileStats();
+        
         let sfx = new Audio('soundeffect2.mp3');
         sfx.play().catch(e => console.log("Audio play blocked", e));
 
-        // Fetch PHP Logic
         fetch('game_logic.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -226,20 +293,25 @@ document.getElementById('roll-btn').addEventListener('click', () => {
         .then(res => res.json())
         .then(data => {
             if (data.error) {
+                // If error, refund the visual chips
+                points += amt;
+                totalSpent -= amt;
+                updateProfileStats();
                 showAlertModal(data.error);
                 btn.disabled = false; isGameActive = false; return;
             }
 
-            points = data.newPoints;
-            totalSpent += amt;
-            if(data.win) totalWon += data.reward;
-            updateProfileStats();
-
-            // Use PHP's numbers for the animation
+            // DO NOT update total winnings/points yet! Wait for animation.
+            
             document.getElementById('die-1').style.transform = `rotateX(${getRot(data.n1).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(data.n1).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
             document.getElementById('die-2').style.transform = `rotateX(${getRot(data.n2).x + Math.floor(Math.random() * 3 + 2) * 360}deg) rotateY(${getRot(data.n2).y + Math.floor(Math.random() * 3 + 2) * 360}deg)`;
             
             setTimeout(() => {
+                // ANIMATION FINISHED: Now update the chips and reveal!
+                points = data.newPoints;
+                if(data.win) totalWon += data.reward;
+                updateProfileStats();
+                
                 diceHistory.push(data.total); 
                 if(diceHistory.length > 10) diceHistory.shift(); 
                 updateDice();
@@ -256,7 +328,11 @@ document.getElementById('roll-btn').addEventListener('click', () => {
                 isGameActive = false;
                 processEndOfGame();
             }, 1280); 
-        }).catch(err => { console.error(err); btn.disabled = false; isGameActive = false; });
+        }).catch(err => { 
+            console.error(err); 
+            points += amt; totalSpent -= amt; updateProfileStats(); // Refund visually
+            btn.disabled = false; isGameActive = false; 
+        });
     });
 });
 
@@ -335,10 +411,14 @@ document.getElementById('color-btn').addEventListener('click', () => {
         btn.disabled = true; 
         txt.innerText = "Spinning..."; 
         
+        // IMMEDIATELY deduct bet visually
+        points -= amt;
+        totalSpent += amt;
+        updateProfileStats();
+        
         let sfx = new Audio('soundeffect1.mp3');
         sfx.play().catch(e => console.log(e));
         
-        // Fetch PHP Logic
         fetch('game_logic.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -347,16 +427,13 @@ document.getElementById('color-btn').addEventListener('click', () => {
         .then(res => res.json())
         .then(data => {
             if (data.error) {
+                points += amt; totalSpent -= amt; updateProfileStats();
                 showAlertModal(data.error);
                 btn.disabled = false; isGameActive = false; return;
             }
 
-            points = data.newPoints;
-            totalSpent += amt;
-            if(data.win) totalWon += data.reward;
-            updateProfileStats();
-
-            // Use PHP's official color for the spin animation
+            // DO NOT update points yet! Wait for animation.
+            
             const finalColorStr = data.finalColorStr;
             
             track.style.transition = 'none'; 
@@ -385,6 +462,11 @@ document.getElementById('color-btn').addEventListener('click', () => {
             track.style.transform = `translateX(-${exactStopPos}px)`;
 
             setTimeout(() => {
+                // ANIMATION FINISHED: Update points and reveal
+                points = data.newPoints;
+                if(data.win) totalWon += data.reward;
+                updateProfileStats();
+
                 colorHistory.push(finalColorStr); 
                 if(colorHistory.length>10) colorHistory.shift(); 
                 updateColor();
@@ -401,7 +483,11 @@ document.getElementById('color-btn').addEventListener('click', () => {
                 isGameActive = false;
                 processEndOfGame();
             }, 8310); 
-        }).catch(err => { console.error(err); btn.disabled = false; isGameActive = false; });
+        }).catch(err => { 
+            console.error(err); 
+            points += amt; totalSpent -= amt; updateProfileStats();
+            btn.disabled = false; isGameActive = false; 
+        });
     });
 });
 
@@ -434,7 +520,6 @@ function updateColor() {
 document.getElementById('prime-btn').addEventListener('click', () => {
     const amt = parseInt(document.getElementById('prime-bet-amount').value);
     const primeType = document.getElementById('prime-bet-type').value;
-    const colorType = document.getElementById('prime-color-type').value;
     const btn = document.getElementById('prime-btn');
     const txt = document.getElementById('prime-result');
     const sp = document.getElementById('prime-spinner');
@@ -445,67 +530,67 @@ document.getElementById('prime-btn').addEventListener('click', () => {
     
     let primeText = primeType === 'prime' ? 'PRIME' : 'NOT PRIME';
     
-    showConfirmModal(`Are you sure you want to bet ${amt} chips on ${primeText} & ${colorType.toUpperCase()}?`, () => {
+    showConfirmModal(`Are you sure you want to bet ${amt} chips on ${primeText}?`, () => {
         isGameActive = true;
         btn.disabled = true; 
         txt.innerText = "Spinning..."; 
         
+        // IMMEDIATELY deduct bet visually
+        points -= amt;
+        totalSpent += amt;
+        updateProfileStats();
+        
         let sfx = new Audio('soundeffect3.mp3');
         sfx.play().catch(e => console.log(e));
         
-        // Fetch PHP Logic
         fetch('game_logic.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ game: 'prime', betAmount: amt, primeType: primeType, colorType: colorType })
+            body: JSON.stringify({ game: 'prime', betAmount: amt, primeType: primeType })
         })
         .then(res => res.json())
         .then(data => {
             if (data.error) {
+                points += amt; totalSpent -= amt; updateProfileStats();
                 showAlertModal(data.error);
                 btn.disabled = false; isGameActive = false; return;
             }
 
-            points = data.newPoints;
-            totalSpent += amt;
-            if(data.win) totalWon += data.reward;
-            updateProfileStats();
-
-            // Run dummy animation while waiting to show PHP's official result
+            // DO NOT update points yet! Wait for animation.
+            
             let s = 0;
             let anim = setInterval(() => {
                 sp.innerText = Math.floor(Math.random()*30)+1;
-                sp.style.color = Math.random() < 0.5 ? '#e74c3c' : '#2ecc71'; 
+                sp.style.color = '#ffcc00'; 
                 s++;
                 
                 if(s >= 40) { 
                     clearInterval(anim); 
                     
-                    // Display PHP's result
+                    // ANIMATION FINISHED: Update points and reveal
+                    points = data.newPoints;
+                    if(data.win) totalWon += data.reward;
+                    updateProfileStats();
+                    
                     const finalNum = data.finalNum; 
-                    const finalColor = data.finalColor;
                     const finalIsPrime = data.finalIsPrime;
                     
                     sp.innerText = finalNum; 
-                    sp.style.color = (finalColor === 'red') ? '#e74c3c' : '#2ecc71'; 
+                    sp.style.color = finalIsPrime ? '#3498db' : '#e74c3c'; 
                     
                     primeHistory.push(finalIsPrime); 
                     if(primeHistory.length>10) primeHistory.shift(); 
                     
-                    primeColorHistory.push(finalColor); 
-                    if(primeColorHistory.length>10) primeColorHistory.shift(); 
-                    
                     updatePrime();
                     
-                    let primeTextDisplay = finalIsPrime ? 'PRIME number' : 'NOT PRIME number';
-                    let colorTextDisplay = data.isColorCorrect ? 'CORRECT color' : 'WRONG COLOR guess';
+                    let primeTextDisplay = finalIsPrime ? 'PRIME' : 'NOT PRIME';
 
                     if(data.win){ 
                         new Audio('winning.mp3').play().catch(e => console.log(e));
-                        txt.innerHTML = `<span class="win-text">WIN! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}. Pays ${data.reward} Chips</span>`; 
+                        txt.innerHTML = `<span class="win-text">WIN! ${finalNum} is ${primeTextDisplay}. Pays ${data.reward} Chips</span>`; 
                     } else {
                         new Audio('lossing.mp3').play().catch(e => console.log(e));
-                        txt.innerHTML = `<span class="lose-text">LOSE! ${finalNum} is ${primeTextDisplay}, ${colorTextDisplay}.</span>`;
+                        txt.innerHTML = `<span class="lose-text">LOSE! ${finalNum} is ${primeTextDisplay}.</span>`;
                     }
                     
                     btn.disabled=false; 
@@ -513,7 +598,11 @@ document.getElementById('prime-btn').addEventListener('click', () => {
                     processEndOfGame();
                 }
             }, 51); 
-        }).catch(err => { console.error(err); btn.disabled = false; isGameActive = false; });
+        }).catch(err => { 
+            console.error(err); 
+            points += amt; totalSpent -= amt; updateProfileStats();
+            btn.disabled = false; isGameActive = false; 
+        });
     });
 });
 
@@ -522,29 +611,19 @@ function updatePrime() {
     let p=0, np=0; 
     primeHistory.forEach(i => { if(i) p++; else np++; }); 
     
-    let pr=0, pg=0; 
-    primeColorHistory.forEach(c => { if(c==='red') pr++; else pg++; }); 
-    
     let t = primeHistory.length;
     document.getElementById('trend-prime').innerText = Math.round((p/t)*100)+'%'; 
     document.getElementById('trend-notprime').innerText = Math.round((np/t)*100)+'%';
-    document.getElementById('trend-prime-red').innerText = Math.round((pr/t)*100)+'%'; 
-    document.getElementById('trend-prime-green').innerText = Math.round((pg/t)*100)+'%';
     
-    let pt="Pattern is mixed!"; let ps="", cs="";
+    let pt="Pattern is mixed!";
     
     if(t>=3){
         let l3p = primeHistory.slice(-3); 
-        if(l3p.every(x=>x===true)) ps="🔥 3 Primes! Bet NOT PRIME. "; 
-        else if(l3p.every(x=>x===false)) ps="🔥 3 Not Primes! Prime due. ";
-        
-        let l3c = primeColorHistory.slice(-3);
-        if(l3c.every(c=>c==='red')) cs="🔥 3 Reds! Bet GREEN."; 
-        else if(l3c.every(c=>c==='green')) cs="🔥 3 Greens! Bet RED.";
+        if(l3p.every(x=>x===true)) pt="🔥 3 Primes in a row! Bet NOT PRIME."; 
+        else if(l3p.every(x=>x===false)) pt="🔥 3 Not Primes! Prime is due.";
     }
     
-    if(ps || cs) pt = ps + cs;
-    document.getElementById('trend-pred-prime').innerText = pt.trim() || "Pattern is mixed!";
+    document.getElementById('trend-pred-prime').innerText = pt;
 }
 
 /* GAMEOVER */
@@ -560,7 +639,6 @@ function resetGame() {
     diceHistory = []; 
     colorHistory = []; 
     primeHistory = []; 
-    primeColorHistory = [];
     
     document.querySelectorAll('.white-text').forEach(e => e.innerText='0%'); 
     document.querySelectorAll('.trend-pred').forEach(e => e.innerText='Waiting...');
